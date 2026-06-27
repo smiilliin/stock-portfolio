@@ -55,15 +55,10 @@ python main.py
 - 전략별 전체 포트폴리오 가치
 - 전략별 현금성 자산 비중
 
-## 노트북
-
-`main.ipynb`에는 같은 실험을 노트북 형태로 정리해 두었습니다.
-
 ## 프로젝트 구조
 
 ```text
 main.py
-main.ipynb
 financial_fetch.py
 example.png
 pyproject.toml
