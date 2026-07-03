@@ -2,12 +2,16 @@
 # coding: utf-8
 
 
+import argparse
+
 from financial_fetch import HistoricalDataRequest, fetch_historical_data
 import pandas as pd
 from pandas import DataFrame
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+import dataframe_image as dfi
 
 every_month_investment = 300
 
@@ -24,6 +28,7 @@ class Wallet:
             ],
             axis=1,
             join="outer",
+            sort=False,
         ).sort_index()
         close_frame = close_frame.ffill().bfill()
 
@@ -111,7 +116,11 @@ def five_percent_strategy(
 
 
 def run_wallet_simulation(
-    wallet, every_month_date, every_month_investment, strategy: callable
+    wallet,
+    every_month_date,
+    every_month_investment,
+    strategy: callable,
+    portfolio_ratio=(0.3, 0.1, 0.1),
 ):
     wallet_history = []
 
@@ -120,7 +129,7 @@ def run_wallet_simulation(
 
         wallet.rebalance(
             date_index=date_index,
-            target_ratio=(0.3, 0.1, 0.1),
+            target_ratio=portfolio_ratio,
             strategy=strategy,
         )
         wallet_history.append(wallet.get_balance(date_index))
@@ -164,65 +173,78 @@ def calculate_portfolio_metrics(
     }
 
 
-start_date = "2000-01-01"
-end_date = "2026-01-02"
-
-voo_data = fetch_historical_data(
-    HistoricalDataRequest(ticker="VOO", start=start_date, end=end_date, interval="1mo")
-)
-vxus_data = fetch_historical_data(
-    HistoricalDataRequest(ticker="VXUS", start=start_date, end=end_date, interval="1mo")
-)
-sgov_data = fetch_historical_data(
-    HistoricalDataRequest(ticker="SGOV", start=start_date, end=end_date, interval="1mo")
-)
-every_month_date = pd.to_datetime(voo_data.index)
+def parse_csv_values(raw_value: str, cast_type):
+    values = [item.strip() for item in raw_value.split(",") if item.strip()]
+    return [cast_type(value) for value in values]
 
 
-none_history = run_wallet_simulation(
-    wallet=Wallet(stocks_data=[voo_data, vxus_data, sgov_data]),
-    every_month_date=every_month_date,
-    every_month_investment=every_month_investment,
-    strategy=none_strategy,
-)
-submissive_history = run_wallet_simulation(
-    wallet=Wallet(stocks_data=[voo_data, vxus_data, sgov_data]),
-    every_month_date=every_month_date,
-    every_month_investment=every_month_investment,
-    strategy=submissive_strategy,
-)
-five_percent_history = run_wallet_simulation(
-    wallet=Wallet(stocks_data=[voo_data, vxus_data, sgov_data]),
-    every_month_date=every_month_date,
-    every_month_investment=every_month_investment,
-    strategy=five_percent_strategy,
-)
+def build_output_name(base_name: str, suffix: str, extension: str):
+    safe_suffix = suffix.strip().replace(" ", "_")
+    if not safe_suffix:
+        return f"{base_name}.{extension}"
+
+    return f"{base_name}_{safe_suffix}.{extension}"
 
 
-from IPython.display import display
+def fetch_stock_data(tickers, start_date, end_date):
+    return [
+        fetch_historical_data(
+            HistoricalDataRequest(
+                ticker=ticker,
+                start=start_date,
+                end=end_date,
+                interval="1mo",
+            )
+        )
+        for ticker in tickers
+    ]
 
-strategy_histories = {
-    "None": none_history,
-    "Submissive": submissive_history,
-    "Five Percent": five_percent_history,
-}
 
-summary_rows = []
-monthly_dates = pd.to_datetime(every_month_date)
+def run_portfolio_experiment(
+    tickers,
+    portfolio_ratio,
+    output_suffix="",
+    start_date="2000-01-01",
+    end_date="2026-01-02",
+    monthly_investment=every_month_investment,
+):
+    stock_data = fetch_stock_data(tickers, start_date, end_date)
+    every_month_date = pd.to_datetime(stock_data[0].index)
 
-for strategy_name, history in strategy_histories.items():
-    metrics = calculate_portfolio_metrics(history)
+    strategy_histories = {
+        "None": run_wallet_simulation(
+            wallet=Wallet(stocks_data=stock_data),
+            every_month_date=every_month_date,
+            every_month_investment=monthly_investment,
+            strategy=none_strategy,
+            portfolio_ratio=portfolio_ratio,
+        ),
+        "Submissive": run_wallet_simulation(
+            wallet=Wallet(stocks_data=stock_data),
+            every_month_date=every_month_date,
+            every_month_investment=monthly_investment,
+            strategy=submissive_strategy,
+            portfolio_ratio=portfolio_ratio,
+        ),
+        "Five Percent": run_wallet_simulation(
+            wallet=Wallet(stocks_data=stock_data),
+            every_month_date=every_month_date,
+            every_month_investment=monthly_investment,
+            strategy=five_percent_strategy,
+            portfolio_ratio=portfolio_ratio,
+        ),
+    }
 
-    summary_rows.append(
-        {
-            "strategy": strategy_name,
-            **metrics,
-        }
-    )
+    from IPython.display import display
 
-summary_df = pd.DataFrame(summary_rows)
-display(
-    summary_df.round(
+    summary_rows = []
+
+    for strategy_name, history in strategy_histories.items():
+        metrics = calculate_portfolio_metrics(history)
+        summary_rows.append({"strategy": strategy_name, **metrics})
+
+    summary_df = pd.DataFrame(summary_rows)
+    rounded_summary_df = summary_df.round(
         {
             "total_return_pct": 2,
             "annualized_return_pct": 2,
@@ -233,53 +255,118 @@ display(
             "sharpe_ratio": 3,
         }
     )
-)
+    display(rounded_summary_df)
 
-fig, axes = plt.subplots(1, 2, figsize=(10, 6), constrained_layout=True)
+    summary_output_path_json = build_output_name(
+        "strategy_summary", output_suffix, "json"
+    )
+    summary_output_path_png = build_output_name(
+        "strategy_summary", output_suffix, "png"
+    )
+    summary_df.to_json(summary_output_path_json, index=False)
+    dfi.export(summary_df, summary_output_path_png, table_conversion="matplotlib")
 
-for strategy_name, history in strategy_histories.items():
-    total_balance = history.sum(axis=1)
-    invested_total = every_month_investment * np.arange(1, len(total_balance) + 1)
-    normalized_balance = total_balance / invested_total
-    axes[0].plot(monthly_dates, normalized_balance, label=strategy_name)
+    fig, axes = plt.subplots(1, 2, figsize=(10, 6), constrained_layout=True)
+
+    for strategy_name, history in strategy_histories.items():
+        total_balance = history.sum(axis=1)
+        invested_total = monthly_investment * np.arange(1, len(total_balance) + 1)
+        normalized_balance = total_balance / invested_total
+        axes[0].plot(every_month_date, normalized_balance, label=strategy_name)
+
+    axes[0].plot(
+        every_month_date,
+        np.ones(len(every_month_date)),
+        label="Total Invested Capital",
+        linestyle="--",
+        color="gray",
+    )
+
+    axes[0].set_title("Portfolio Balance by Strategy")
+    axes[0].set_xlabel("Date")
+    axes[0].set_ylabel("Value / Invested Capital")
+    axes[0].legend()
+    axes[0].grid(alpha=0.25)
+
+    for strategy_name, history in strategy_histories.items():
+        total_balance = history[:, 2]
+        invested_total = monthly_investment * np.arange(1, len(total_balance) + 1)
+        normalized_balance = total_balance / invested_total
+        axes[1].plot(every_month_date, normalized_balance, label=strategy_name)
+
+    axes[1].plot(
+        every_month_date,
+        np.ones(len(every_month_date)),
+        label="Total Invested Capital",
+        linestyle="--",
+        color="gray",
+    )
+
+    axes[1].set_title("Liquid Assets by Strategy")
+    axes[1].set_xlabel("Date")
+    axes[1].set_ylabel("Value / Invested Capital")
+    axes[1].legend()
+    axes[1].grid(alpha=0.25)
+
+    output_path = build_output_name("strategy_comparison", output_suffix, "png")
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    print(f"Saved summary to {summary_output_path_json}, {summary_output_path_png}")
+    print(f"Saved comparison chart to {output_path}")
 
 
-axes[0].plot(
-    monthly_dates,
-    np.ones(len(every_month_date)),
-    label="Total Invested Capital",
-    linestyle="--",
-    color="gray",
-)
+def build_argument_parser():
+    parser = argparse.ArgumentParser(description="Run stock portfolio simulations.")
+    parser.add_argument(
+        "--tickers",
+        default="VOO,VXUS,TLT",
+        help="Comma-separated tickers to compare, for example VOO,VXUS,TLT",
+    )
+    parser.add_argument(
+        "--portfolio-ratio",
+        default="0.3,0.1,0.1",
+        help="Comma-separated target ratios that match --tickers",
+    )
+    parser.add_argument(
+        "--output-suffix",
+        default="",
+        help="Suffix to append to saved files, for example core or test01",
+    )
+    parser.add_argument(
+        "--start-date",
+        default="2000-01-01",
+        help="Historical data start date",
+    )
+    parser.add_argument(
+        "--end-date",
+        default="2026-01-02",
+        help="Historical data end date",
+    )
+    parser.add_argument(
+        "--monthly-investment",
+        type=float,
+        default=every_month_investment,
+        help="Amount invested each month",
+    )
+    return parser
 
-axes[0].set_title("Portfolio Balance by Strategy")
-axes[0].set_xlabel("Date")
-axes[0].set_ylabel("Value / Invested Capital")
-axes[0].legend()
-axes[0].grid(alpha=0.25)
 
-for strategy_name, history in strategy_histories.items():
-    total_balance = history[:, 2]
-    invested_total = every_month_investment * np.arange(1, len(total_balance) + 1)
-    normalized_balance = total_balance / invested_total
-    axes[1].plot(monthly_dates, normalized_balance, label=strategy_name)
+def main():
+    args = build_argument_parser().parse_args()
+    tickers = parse_csv_values(args.tickers, str)
+    portfolio_ratio = parse_csv_values(args.portfolio_ratio, float)
 
+    if len(tickers) != len(portfolio_ratio):
+        raise ValueError("--tickers and --portfolio-ratio must have the same length")
 
-axes[1].plot(
-    monthly_dates,
-    np.ones(len(every_month_date)),
-    label="Total Invested Capital",
-    linestyle="--",
-    color="gray",
-)
-
-axes[1].set_title("Liquid Assets by Strategy")
-axes[1].set_xlabel("Date")
-axes[1].set_ylabel("Value / Invested Capital")
-axes[1].legend()
-axes[1].grid(alpha=0.25)
+    run_portfolio_experiment(
+        tickers=tickers,
+        portfolio_ratio=portfolio_ratio,
+        output_suffix=args.output_suffix,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        monthly_investment=args.monthly_investment,
+    )
 
 
-output_path = "strategy_comparison.png"
-plt.savefig(output_path, dpi=150, bbox_inches="tight")
-print(f"Saved comparison chart to {output_path}")
+if __name__ == "__main__":
+    main()

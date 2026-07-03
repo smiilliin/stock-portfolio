@@ -27,10 +27,18 @@ uv sync
 ### 포트폴리오 시뮬레이션
 
 ```bash
-python main.py
+uv run python main.py
 ```
 
 이 명령은 전략별 평가표를 출력하고, 비교 이미지를 `strategy_comparison.png`로 저장합니다.
+
+종목 조합, 목표 비율, 저장 파일 뒤에 붙일 별칭도 바로 넣을 수 있습니다.
+
+```bash
+uv run python main.py --tickers VOO,VXUS,TLT --portfolio-ratio 0.3,0.1,0.1 --output-suffix core
+```
+
+이 경우 결과 파일은 `strategy_summary_core.csv`, `strategy_comparison_core.png`처럼 저장됩니다.
 
 ## 결과 예시
 
