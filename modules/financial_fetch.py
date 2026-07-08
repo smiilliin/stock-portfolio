@@ -36,3 +36,22 @@ def fetch_historical_data(request: HistoricalDataRequest):
         raise RuntimeError(f"{ticker}의 과거 데이터를 찾지 못했습니다.")
 
     return data
+
+
+def fetch_stock_data(tickers, start_date, end_date):
+    if not tickers:
+        raise ValueError("tickers는 비어 있을 수 없습니다.")
+    if not start_date or not end_date:
+        raise ValueError("start_date와 end_date는 비어 있을 수 없습니다.")
+
+    return [
+        fetch_historical_data(
+            HistoricalDataRequest(
+                ticker=ticker,
+                start=start_date,
+                end=end_date,
+                interval="1mo",
+            )
+        )
+        for ticker in tickers
+    ]
